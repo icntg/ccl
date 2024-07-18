@@ -9,40 +9,67 @@
 #include "../../vendor/crypto/rc4/rc4.h"
 
 
-// int32_t Crypto$$$SetRandomFunction(const FuncPtr$$$Crypto$$$RandomBuffer func)
-// {
-//     random = func;
-//     return 0;
-// }
+static int32_t calcKeys(
+    const void* inSecret, size_t inSecretSize,
+    const uint8_t inNonce[SIZE_NONCE],
+    uint8_t outEncKey[SIZE_HMAC32],
+    uint8_t outMacKey[SIZE_HMAC32]
+)
+{
+    int32_t retCode;
+    if (NULL == inSecret || inSecretSize <= 0 || NULL == inNonce || NULL == outEncKey || NULL == outMacKey)
+    {
+        retCode = EADDRNOTAVAIL;
+        goto __ERROR__;
+    }
+    // 计算加密key
+    retCode = hmac256(inNonce, SIZE_NONCE, inSecret, inSecretSize, outEncKey);
+    if (0 != retCode)
+    {
+        goto __ERROR__;
+    }
+    // 计算校验key
+    retCode = hmac256(inSecret, inSecretSize, inNonce, SIZE_NONCE, outMacKey);
+    if (0 != retCode)
+    {
+        goto __ERROR__;
+    }
+    goto __FREE__;
+__ERROR__:
+    do
+    {
+    }
+    while (0);
+__FREE__:
+    return retCode;
+}
 
 /**
- * 不安全的随机字节生成函数。
- * 依赖当前时间和外部传入的buffer参数地址。
+ * 不安全的随机字节生成函数。在缺少系统随机数支持的情况下使用。
+ * 依赖 1.当前时间；2.外部传入的buffer参数地址；3.buffer前四字节的内容。
  * buffer参数地址有可能在栈上，也可能在堆里，也可能在全局变量中。
- * 总之是为了增加随机性。
+ * 总之一切是为了增加随机性。
  * @param buffer
  * @param size
  * @return
  */
 int32_t Crypto$$$RandomBufferInsecure(void* buffer, const size_t size)
 {
-    const int32_t result = 0;
-    const size_t n = size / sizeof(unsigned int);
-    const size_t m = size % sizeof(unsigned int);
-    uint8_t* _buffer = buffer;
-    memset(buffer, 0, size);
-
-    const unsigned int seed = ~((unsigned int)time(NULL) ^ (unsigned int)buffer);
-    srand(seed);
-    for (size_t i = 0; i < n; i++)
+    if (NULL == buffer || size <= 0)
     {
-        unsigned int r = (unsigned int)rand(); // NOLINT(cert-msc30-c, cert-msc50-cpp)
-        memcpy(_buffer + i * sizeof(unsigned int), &r, sizeof(unsigned int));
+        return EADDRNOTAVAIL;
     }
-    if (m > 0)
+
+    const int32_t result = 0;
+    const unsigned int seed = ~((unsigned int)time(NULL) ^ (unsigned int)buffer ^ *(unsigned int*)buffer);
+
+    memset(buffer, 0, size);
+    srand(seed);
+    for (size_t i = 0; i < size; i++)
     {
-        const unsigned int r = (unsigned int)rand(); // NOLINT(cert-msc30-c, cert-msc50-cpp)
-        memcpy(_buffer + sizeof(unsigned int) * n, &r, m);
+        uint8_t* p = buffer;
+        p += i;
+        *p = rand() & 0xff; // NOLINT(cert-msc30-c, cert-msc50-cpp)
     }
     return result & (int32_t)size;
 }
@@ -67,14 +94,14 @@ int32_t Crypto$$$Encrypt(
     void* outEncrypted, size_t* outEncryptedSize
 )
 {
-    int32_t retCode = 0;
-    if (NULL != outEncryptedSize && inMessageSize > 0)
+    int32_t retCode;
+    if (NULL == outEncrypted && NULL != outEncryptedSize && inMessageSize > 0)
     {
         // calculate the size of out buffer
         size_t nbytes = 0;
-        retCode = Crypto$$$EncodeUint32(inMessageSize, NULL, &nbytes);
+        retCode = Crypto$$$EncodeInteger(inMessageSize, NULL, &nbytes);
         *outEncryptedSize = SIZE_HMAC16 + SIZE_NONCE + nbytes + inMessageSize;
-        return EAGAIN;
+        return retCode | EAGAIN;
     }
     if (NULL == inSecret || inSecretSize <= 0 ||
         NULL == inMessage || inMessageSize <= 0 ||
@@ -86,10 +113,11 @@ int32_t Crypto$$$Encrypt(
     }
 
     size_t nLengthBytes;
-
+    uint8_t encKey[SIZE_HMAC32], macKey[SIZE_HMAC32], hash_e[SIZE_HMAC32], hash_l[SIZE_HMAC32];
+    uint8_t* pl = (uint8_t*)outHmac16 + SIZE_HMAC8;
     {
         uint8_t lengthBytes[8];
-        retCode = Crypto$$$EncodeUint32(inMessageSize, lengthBytes, &nLengthBytes);
+        retCode = Crypto$$$EncodeInteger(inMessageSize, lengthBytes, &nLengthBytes);
         if (0 != retCode)
         {
             goto __ERROR__;
@@ -98,49 +126,56 @@ int32_t Crypto$$$Encrypt(
         memcpy(outEncrypted, lengthBytes, nLengthBytes);
     }
 
-    uint8_t enc_key[SIZE_HMAC32], hsh_key[SIZE_HMAC32], enc_hash[SIZE_HMAC32];
-    memset(enc_key, 0, SIZE_HMAC32);
-    memset(hsh_key, 0, SIZE_HMAC32);
-    memset(enc_hash, 0, SIZE_HMAC32);
+
+    memset(encKey, 0, SIZE_HMAC32);
+    memset(macKey, 0, SIZE_HMAC32);
+    memset(hash_l, 0, SIZE_HMAC32);
+    memset(hash_e, 0, SIZE_HMAC32);
 
     memset(outHmac16, 0, SIZE_HMAC16);
 
-    retCode = hmac256(inNonce, SIZE_NONCE, inSecret, inSecretSize, enc_key);
+    retCode = calcKeys(inSecret, inSecretSize, inNonce, encKey, macKey);
     if (0 != retCode)
     {
         goto __ERROR__;
     }
-    retCode = hmac256(inSecret, inSecretSize, inNonce, SIZE_NONCE, hsh_key);
+
+    // 计算 HashL
+    HMAC256_Context ctx;
+    memset(&ctx, 0, sizeof(HMAC256_Context));
+    retCode = HMAC256$$$Init(&ctx, macKey, SIZE_HMAC32);
+    retCode |= HMAC256$$$Update(&ctx, inNonce, SIZE_NONCE);
+    retCode |= HMAC256$$$Update(&ctx, outEncrypted, nLengthBytes);
+    retCode |= HMAC256$$$Final(&ctx, hash_l);
     if (0 != retCode)
     {
         goto __ERROR__;
     }
 
     retCode = rc4(
-        enc_key,
+        encKey,
         SIZE_HMAC32,
         inMessage,
         inMessageSize,
-        (uint8_t *)outEncrypted + nLengthBytes
+        (uint8_t*)outEncrypted + nLengthBytes
     );
     if (0 != retCode)
     {
         goto __ERROR__;
     }
 
-    uint8_t hmac_buffer[SIZE_HMAC32];
-    memset(hmac_buffer, 0, SIZE_HMAC32);
-    HMAC256_Context ctx;
-    memset(&ctx, 0, sizeof(HMAC256_Context));
-    retCode = HMAC256$$$Init(&ctx, hsh_key, SIZE_HMAC32);
+    // 计算 HashE
+    retCode = HMAC256$$$Init(&ctx, macKey, SIZE_HMAC32);
+    retCode |= HMAC256$$$Update(&ctx, hash_l, SIZE_HMAC8);
     retCode |= HMAC256$$$Update(&ctx, inNonce, SIZE_NONCE);
     retCode |= HMAC256$$$Update(&ctx, outEncrypted, nLengthBytes + inMessageSize);
-    retCode |= HMAC256$$$Final(&ctx, hmac_buffer);
+    retCode |= HMAC256$$$Final(&ctx, hash_e);
     if (0 != retCode)
     {
         goto __ERROR__;
     }
-    memcpy(outHmac16, hmac_buffer, SIZE_HMAC16);
+    memcpy(outHmac16, hash_e, SIZE_HMAC8);
+    memcpy(pl, hash_l, SIZE_HMAC8);
 
     *outEncryptedSize = nLengthBytes + inMessageSize;
 
@@ -161,6 +196,21 @@ int32_t Crypto$$$Decrypt(
     void* outMessage, size_t* outMessageSize
 )
 {
+    int32_t retCode;
+    if (NULL == outMessage && NULL != outMessageSize && NULL != inEncodedSizeAndEncrypted)
+    {
+        // 只提取长度信息
+        size_t nLengthBytes;
+        int64_t encryptedSize;
+        retCode = Crypto$$$DecodeInteger(inEncodedSizeAndEncrypted, &encryptedSize, &nLengthBytes);
+        if (0 != retCode)
+        {
+            goto __ERROR__;
+        }
+        retCode |= EAGAIN;
+        goto __FREE__;
+    }
+
     if (NULL == inSecret || inSecretSize <= 0 ||
         NULL == inHmac16 || NULL == inNonce ||
         NULL == inEncodedSizeAndEncrypted ||
@@ -168,49 +218,61 @@ int32_t Crypto$$$Decrypt(
     {
         return EADDRNOTAVAIL;
     }
-    int32_t retCode = 0;
+
 
     size_t nLengthBytes;
-    uint32_t encryptedSize;
-    retCode = Crypto$$$DecodeUint32(inEncodedSizeAndEncrypted, &encryptedSize, &nLengthBytes);
-    if (0 != retCode)
-    {
-        goto __ERROR__;
-    }
-
-
-    uint8_t enc_key[SIZE_HMAC32], hsh_key[SIZE_HMAC32], expected_hash[SIZE_HMAC32];
-    memset(enc_key, 0, SIZE_HMAC32);
-    memset(hsh_key, 0, SIZE_HMAC32);
-    memset(expected_hash, 0, SIZE_HMAC32);
-
-    retCode = hmac256(inSecret, inSecretSize, inNonce, SIZE_NONCE, hsh_key);
-    if (0 != retCode)
-    {
-        goto __ERROR__;
-    }
-
+    int64_t encryptedSize;
+    uint8_t encKey[SIZE_HMAC32], macKey[SIZE_HMAC32], expected[SIZE_HMAC32];
     HMAC256_Context ctx;
-    memset(&ctx, 0, sizeof(HMAC256_Context));
-    HMAC256$$$Init(&ctx, hsh_key, SIZE_HMAC32);
-    HMAC256$$$Update(&ctx, inNonce, SIZE_NONCE);
-    HMAC256$$$Update(&ctx, inEncodedSizeAndEncrypted, nLengthBytes + encryptedSize);
-    HMAC256$$$Final(&ctx, expected_hash);
 
-    if (0 != memcmp(inHmac16, expected_hash, SIZE_HMAC16))
+    memset(encKey, 0, SIZE_HMAC32);
+    memset(macKey, 0, SIZE_HMAC32);
+    memset(expected, 0, SIZE_HMAC32);
+    uint8_t* pl = (uint8_t*)inHmac16 + SIZE_HMAC8;
+
+    retCode = Crypto$$$DecodeInteger(inEncodedSizeAndEncrypted, &encryptedSize, &nLengthBytes);
+    if (0 != retCode)
+    {
+        goto __ERROR__;
+    }
+
+    retCode = calcKeys(inSecret, inSecretSize, inNonce, encKey, macKey);
+    if (0 != retCode)
+    {
+        goto __ERROR__;
+    }
+
+    // 校验 Hash-L
+    memset(&ctx, 0, sizeof(HMAC256_Context));
+    HMAC256$$$Init(&ctx, macKey, SIZE_HMAC32);
+    HMAC256$$$Update(&ctx, inNonce, SIZE_NONCE);
+    HMAC256$$$Update(&ctx, inEncodedSizeAndEncrypted, nLengthBytes);
+    HMAC256$$$Final(&ctx, expected);
+
+    if (0 != memcmp(expected, pl, SIZE_HMAC8))
     {
         retCode = EBADMSG;
         goto __ERROR__;
     }
 
-    retCode = hmac256(inNonce, SIZE_NONCE, inSecret, inSecretSize, enc_key);
-    if (0 != retCode)
+    // 校验 Hash-E
+    memset(&ctx, 0, sizeof(HMAC256_Context));
+    HMAC256$$$Init(&ctx, macKey, SIZE_HMAC32);
+    HMAC256$$$Update(&ctx, pl, SIZE_HMAC8);
+    HMAC256$$$Update(&ctx, inNonce, SIZE_NONCE);
+    HMAC256$$$Update(&ctx, inEncodedSizeAndEncrypted, nLengthBytes + encryptedSize);
+    HMAC256$$$Final(&ctx, expected);
+
+
+    if (0 != memcmp(inHmac16, expected, SIZE_HMAC8))
     {
+        retCode = EBADMSG;
         goto __ERROR__;
     }
+
     const uint8_t* encrypted = (uint8_t*)inEncodedSizeAndEncrypted + nLengthBytes;
     retCode = rc4(
-        enc_key,
+        encKey,
         SIZE_HMAC32,
         encrypted,
         encryptedSize,
@@ -234,15 +296,20 @@ __FREE__:
     return retCode;
 }
 
-int32_t Crypto$$$EncodeUint32(const uint32_t inInteger, uint8_t outBuffer[8], size_t* outSize)
+int32_t Crypto$$$EncodeInteger(const int64_t inInteger, uint8_t outBuffer[8], size_t* outSize)
 {
-    if (NULL == outSize)
+    if (NULL == outBuffer || NULL == outSize)
     {
         return EADDRNOTAVAIL;
     }
     int32_t retCode = 0;
     // string s;
-    if (inInteger < 0 || inInteger >= (1 << 31))
+    static int64_t __max__ = 1;
+    if (1 == __max__)
+    {
+        __max__ = __max__ << 42;
+    }
+    if (inInteger < 0 || inInteger >= __max__)
     {
         return EINVAL;
     }
@@ -255,22 +322,22 @@ int32_t Crypto$$$EncodeUint32(const uint32_t inInteger, uint8_t outBuffer[8], si
     memset(buffer, 0, 8);
     int idx = 0;
     {
-        uint32_t n = inInteger;
+        int64_t n = inInteger;
 
         while (n > 0)
         {
-            uint32_t fn = n & 0x3f;
+            int64_t fn = n & 0x3f;
             n = n >> 6;
-            uint32_t v = (uint8_t)((0x80 | fn) & 0xbf);
+            int64_t v = (uint8_t)((0x80 | fn) & 0xbf);
             buffer[idx] = v;
             idx++;
-            uint32_t hlc = 8 - idx - 2;
+            int64_t hlc = 8 - idx - 2;
             if (n >= (1 << hlc))
             {
                 continue;
             }
-            uint32_t hh = ((1 << (idx + 1)) - 1) << (hlc + 1);
-            uint32_t hb = hh | n;
+            int64_t hh = ((1 << (idx + 1)) - 1) << (hlc + 1);
+            int64_t hb = hh | n;
             buffer[idx] = (uint8_t)hb;
             idx++;
             break;
@@ -301,7 +368,7 @@ __FREE__:
     return retCode;
 }
 
-int32_t Crypto$$$DecodeUint32(const void* inBuffer, uint32_t* outInteger, size_t* outNBytes)
+int32_t Crypto$$$DecodeInteger(const void* inBuffer, int64_t* outInteger, size_t* outNBytes)
 {
     if (NULL == inBuffer || NULL == outInteger || NULL == outNBytes)
     {
@@ -329,17 +396,17 @@ int32_t Crypto$$$DecodeUint32(const void* inBuffer, uint32_t* outInteger, size_t
     {
         return EINVAL;
     }
-    uint32_t tail = 0;
+    int64_t tail = 0;
     for (size_t i = 1; i < n; i++)
     {
         if (s[i] >> 6 != 2)
         {
-            return -(int32_t)i - 1;
+            return -(int64_t)i - 1;
         }
         tail = (tail << 6) | (s[i] & 0x3f);
     }
     const uint8_t mask = (1 << (8 - n)) - 1;
-    const uint32_t offset = 6 * (n - 1);
+    const int64_t offset = 6 * (n - 1);
     *outInteger = ((header & mask) << offset) | tail;
     *outNBytes = n;
     return 0;
@@ -355,9 +422,9 @@ int32_t Crypto$$$DecryptStream(
     const uint8_t* nonce = (const uint8_t*)inStream + SIZE_HMAC16;
     const uint8_t* stream = (const uint8_t*)inStream + SIZE_HMAC16 + SIZE_NONCE;
 
-    uint32_t encryptedSize;
+    int64_t encryptedSize;
     size_t nbytes;
-    Crypto$$$DecodeUint32(stream, &encryptedSize, &nbytes);
+    Crypto$$$DecodeInteger(stream, &encryptedSize, &nbytes);
 
 
     return Crypto$$$Decrypt(

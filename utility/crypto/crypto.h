@@ -8,12 +8,14 @@ extern "C" {
 #endif
 
 #define SIZE_NONCE 8u
+#define SIZE_HMAC8 8u
 #define SIZE_HMAC16 16u
 #define SIZE_HMAC32 32u
 
 typedef struct crypto_block_st
 {
-    uint8_t Hash[SIZE_HMAC16];
+    uint8_t HashE[SIZE_HMAC8]; // mac256(HashL + Nonce + Length + Enc)
+    uint8_t HashL[SIZE_HMAC8]; // mac256(Nonce + Length)
     uint8_t Nonce[SIZE_NONCE];
     uint8_t EncodedSizeAndEncrypted[];
 } CryptoBlock;
@@ -24,9 +26,9 @@ int32_t Crypto$$$RandomBufferInsecure(void* buffer, size_t size);
 
 // int32_t Crypto$$$SetRandomFunction(FuncPtr$$$Crypto$$$RandomBuffer func);
 
-int32_t Crypto$$$EncodeUint32(uint32_t inInteger, uint8_t outBuffer[8], size_t* outSize);
+int32_t Crypto$$$EncodeInteger(int64_t inInteger, uint8_t outBuffer[8], size_t* outSize);
 
-int32_t Crypto$$$DecodeUint32(const void* inBuffer, uint32_t* outInteger, size_t* outNBytes);
+int32_t Crypto$$$DecodeInteger(const void* inBuffer, int64_t* outInteger, size_t* outNBytes);
 
 int32_t Crypto$$$Encrypt(
     const void* inSecret, size_t inSecretSize,
