@@ -61,7 +61,8 @@ int32_t Crypto$$$RandomBufferInsecure(void* buffer, const size_t size)
     }
 
     const int32_t result = 0;
-    const unsigned int seed = ~((unsigned int)time(NULL) ^ (unsigned int)buffer ^ *(unsigned int*)buffer);
+    static unsigned int last_round = 0;
+    const unsigned int seed = ~((unsigned int)time(NULL) ^ (unsigned int)buffer ^ *(unsigned int*)buffer) ^ last_round;
 
     memset(buffer, 0, size);
     srand(seed);
@@ -70,6 +71,8 @@ int32_t Crypto$$$RandomBufferInsecure(void* buffer, const size_t size)
         uint8_t* p = buffer;
         p += i;
         *p = rand() & 0xff; // NOLINT(cert-msc30-c, cert-msc50-cpp)
+        const size_t j = i % sizeof(unsigned int);
+        ((uint8_t*)&last_round)[j] ^= (uint8_t)(*p + i);
     }
     return result & (int32_t)size;
 }
