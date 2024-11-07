@@ -40,7 +40,7 @@ __FREE__:
 
 /**
  * 不安全的随机字节生成函数。在缺少系统随机数支持的情况下使用。
- * 依赖 1.当前时间；2.外部传入的buffer参数地址；3.buffer前四字节的内容。
+ * 随机数种子 依赖 1.当前时间；2.外部传入的buffer参数地址；3.buffer前四字节的内容。
  * buffer参数地址有可能在栈上，也可能在堆里，也可能在全局变量中。
  * 总之一切是为了增加随机性。
  * @param buffer
@@ -54,7 +54,9 @@ int32_t Crypto$$$RandomBufferInsecure(void *buffer, const size_t size) {
 
     const int32_t result = 0;
     static unsigned int last_round = 0;
-    const unsigned int seed = ~((unsigned int) time(NULL) ^ (unsigned int) buffer ^ *(unsigned int *) buffer) ^
+    uint64_t buffer_address = 0;
+    memmove(&buffer_address, &buffer, sizeof(void *));
+    const unsigned int seed = ~((unsigned int) time(NULL) ^ buffer_address ^ *(unsigned int *) buffer) ^
                               last_round;
 
     memset(buffer, 0, size);
@@ -62,9 +64,11 @@ int32_t Crypto$$$RandomBufferInsecure(void *buffer, const size_t size) {
     for (size_t i = 0; i < size; i++) {
         uint8_t *p = buffer;
         p += i;
-        *p = rand() & 0xff; // NOLINT(cert-msc30-c, cert-msc50-cpp)
-        const size_t j = i % sizeof(unsigned int);
-        ((uint8_t *) &last_round)[j] ^= (uint8_t) (*p + i);
+        const int r = rand(); // NOLINT(cert-msc30-c, cert-msc50-cpp)
+        const uint8_t n = r & 0xff;
+        *p = n;
+        const size_t j = (r | i) % sizeof(unsigned int);
+        ((uint8_t *) &last_round)[j] ^= (uint8_t) (n + i);
     }
     return result & (int32_t) size;
 }
@@ -275,11 +279,11 @@ int32_t Crypto$$$EncodeInteger(const int64_t inInteger, uint8_t outBuffer[8], si
     }
     int32_t retCode = 0;
     // string s;
-    static int64_t __max__ = 1;
-    if (1 == __max__) {
-        __max__ = __max__ << 42;
+    static int64_t _max_ = 1;
+    if (1 == _max_) {
+        _max_ = _max_ << 42;
     }
-    if (inInteger < 0 || inInteger >= __max__) {
+    if (inInteger < 0 || inInteger >= _max_) {
         return EINVAL;
     }
     if (inInteger < 128) {
@@ -374,8 +378,8 @@ int32_t Crypto$$$DecryptStream(
     const uint8_t *stream = (const uint8_t *) inStream + SIZE_HMAC16 + SIZE_NONCE;
 
     int64_t encryptedSize;
-    size_t nbytes;
-    Crypto$$$DecodeInteger(stream, &encryptedSize, &nbytes);
+    size_t nBytes;
+    Crypto$$$DecodeInteger(stream, &encryptedSize, &nBytes);
 
 
     return Crypto$$$Decrypt(
