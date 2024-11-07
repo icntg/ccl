@@ -95,9 +95,9 @@ int32_t Crypto$$$Encrypt(
     int32_t retCode;
     if (NULL == outEncrypted && NULL != outEncryptedSize && inMessageSize > 0) {
         // calculate the size of out buffer
-        size_t nbytes = 0;
-        retCode = Crypto$$$EncodeInteger(inMessageSize, NULL, &nbytes);
-        *outEncryptedSize = SIZE_HMAC16 + SIZE_NONCE + nbytes + inMessageSize;
+        size_t nBytes = 0;
+        retCode = Crypto$$$EncodeInteger(inMessageSize, NULL, &nBytes);
+        *outEncryptedSize = SIZE_HMAC16 + SIZE_NONCE + nBytes + inMessageSize;
         return retCode | EAGAIN;
     }
     if (NULL == inSecret || inSecretSize <= 0 ||
@@ -110,14 +110,15 @@ int32_t Crypto$$$Encrypt(
 
     size_t nLengthBytes;
     uint8_t encKey[SIZE_HMAC32], macKey[SIZE_HMAC32], hash_e[SIZE_HMAC32], hash_l[SIZE_HMAC32];
-    uint8_t *pl = (uint8_t *) outHmac16 + SIZE_HMAC8; {
+    uint8_t *pl = (uint8_t *) outHmac16 + SIZE_HMAC8;
+    {
         uint8_t lengthBytes[8];
         retCode = Crypto$$$EncodeInteger(inMessageSize, lengthBytes, &nLengthBytes);
         if (0 != retCode) {
             goto __ERROR__;
         }
         memset(outEncrypted, 0, nLengthBytes + inMessageSize);
-        memcpy(outEncrypted, lengthBytes, nLengthBytes);
+        memmove(outEncrypted, lengthBytes, nLengthBytes);
     }
 
 
@@ -164,8 +165,8 @@ int32_t Crypto$$$Encrypt(
     if (0 != retCode) {
         goto __ERROR__;
     }
-    memcpy(outHmac16, hash_e, SIZE_HMAC8);
-    memcpy(pl, hash_l, SIZE_HMAC8);
+    memmove(outHmac16, hash_e, SIZE_HMAC8);
+    memmove(pl, hash_l, SIZE_HMAC8);
 
     *outEncryptedSize = nLengthBytes + inMessageSize;
 
