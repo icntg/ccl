@@ -108,11 +108,12 @@ int32_t Crypto$$$Encrypt(
         return EADDRNOTAVAIL;
     }
 
-    size_t nLengthBytes;
+    size_t nLengthBytes = 0;
     uint8_t encKey[SIZE_HMAC32], macKey[SIZE_HMAC32], hash_e[SIZE_HMAC32], hash_l[SIZE_HMAC32];
     uint8_t *pl = (uint8_t *) outHmac16 + SIZE_HMAC8;
     {
         uint8_t lengthBytes[8];
+        memset(lengthBytes, 0, 8);
         retCode = Crypto$$$EncodeInteger(inMessageSize, lengthBytes, &nLengthBytes);
         if (0 != retCode) {
             goto __ERROR__;
@@ -289,6 +290,7 @@ int32_t Crypto$$$EncodeInteger(const int64_t inInteger, uint8_t outBuffer[8], si
     }
     if (inInteger < 128) {
         outBuffer[0] = (uint8_t) inInteger;
+        *outSize = 1;
         goto __FREE__;
     }
     uint8_t buffer[8];
