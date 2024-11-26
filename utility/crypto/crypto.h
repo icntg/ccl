@@ -2,6 +2,7 @@
 #define CRYPTO_H_SUNSHINE_MAGNIFICENT_JOURNEY_EXEMPLARY_UNDERSTANDING_GRACE_IMMENSE_LIBRARY_PATIENCE_SERENITY_WISDOM_DILIGENCE
 
 #include <stdint.h>
+#include "../macro.h"
 
 #ifdef __cplusplus
 extern "C" {
