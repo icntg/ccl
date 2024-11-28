@@ -40,7 +40,7 @@ __FREE__:
 
 /**
  * 不安全的随机字节生成函数。在缺少系统随机数支持的情况下使用。
- * 随机数种子 依赖 1.当前时间；2.外部传入的buffer参数地址；3.buffer前四字节的内容。
+ * 随机数种子 依赖 1.当前时间；2.外部传入的buffer参数地址；3.buffer前四字节的内容；4.size的地址和内容
  * buffer参数地址有可能在栈上，也可能在堆里，也可能在全局变量中。
  * 总之一切是为了增加随机性。
  * @param buffer
@@ -54,10 +54,14 @@ int32_t Crypto$$$RandomBufferInsecure(void *buffer, const size_t size) {
 
     const int32_t result = 0;
     static unsigned int last_round = 0;
-    uint64_t buffer_address = 0;
-    memmove(&buffer_address, &buffer, sizeof(void *));
-    const unsigned int seed = ~((unsigned int) time(NULL) ^ buffer_address ^ *(unsigned int *) buffer) ^
-                              last_round;
+    uint64_t buffer_address64 = 0;
+    memmove(&buffer_address64, &buffer, sizeof(void *));
+    unsigned int buffer_address32 = (buffer_address64 >> 32) ^ buffer_address64;
+    uint64_t size_address64 = 0;
+    memmove(&size_address64, &size, sizeof(void *));
+    unsigned int buffer_size32 = (size_address64 << 16) ^ (size_address64 >> 16);
+    const unsigned int seed = ~((unsigned int) time(NULL) ^ buffer_address32 ^ *(unsigned int *) buffer) ^
+                              buffer_size32 ^ size ^ last_round;
 
     memset(buffer, 0, size);
     srand(seed);
@@ -110,8 +114,7 @@ int32_t Crypto$$$Encrypt(
 
     size_t nLengthBytes = 0;
     uint8_t encKey[SIZE_HMAC32], macKey[SIZE_HMAC32], hash_e[SIZE_HMAC32], hash_l[SIZE_HMAC32];
-    uint8_t *pl = (uint8_t *) outHmac16 + SIZE_HMAC8;
-    {
+    uint8_t *pl = (uint8_t *) outHmac16 + SIZE_HMAC8; {
         uint8_t lengthBytes[8];
         memset(lengthBytes, 0, 8);
         retCode = Crypto$$$EncodeInteger(inMessageSize, lengthBytes, &nLengthBytes);
