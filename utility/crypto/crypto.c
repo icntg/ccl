@@ -65,7 +65,8 @@ int32_t Crypto$$$RandomBufferInsecure(void *buffer, const size_t size) {
 
     memset(buffer, 0, size);
     srand(seed);
-    for (size_t i = 0; i < size; i++) {
+    size_t i;
+    for (i = 0; i < size; i++) {
         uint8_t *p = buffer;
         p += i;
         const int r = rand(); // NOLINT(cert-msc30-c, cert-msc50-cpp)
@@ -325,7 +326,8 @@ int32_t Crypto$$$EncodeInteger(const int64_t inInteger, uint8_t outBuffer[8], si
     *outSize = idx;
     if (NULL != outBuffer) {
         memset(outBuffer, 0, 8);
-        for (int i = 0; i < idx; i++) {
+        int i;
+        for (i = 0; i < idx; i++) {
             int j = idx - i - 1;
             outBuffer[j] = buffer[i];
         }

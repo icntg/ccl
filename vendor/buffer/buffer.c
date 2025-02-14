@@ -115,7 +115,8 @@ void Buffer$$$Print(BUFFER_BYTE* b, const bool hex)
     }
     else
     {
-        for(size_t i = 0; i < b->length; i++)
+        size_t i;
+        for(i = 0; i < b->length; i++)
         {
             printf("%02x", b->buffer[i]);
         }
